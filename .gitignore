@@ -4,3 +4,5 @@
 client.exe
 # ignore complete folder/
 # .gitignore doesn’t delete or hide files already tracked in Git. It only prevents new untracked files from being added.
+
+Notes.txt
