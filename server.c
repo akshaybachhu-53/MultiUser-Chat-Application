@@ -13,12 +13,55 @@ close()
 #include<string.h>
 #include<winsock2.h>
 #include<ws2tcpip.h>
+#include<pthread.h>
+#include<unistd.h>
 
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library
 
+struct thread_args{
+    int client_sock;
+};
 void error(const char* msg){
     perror("Error occured: \n");
     exit(1);
+}
+void *handle_client(void *args){
+    struct thread_args *targs = (struct thread_args *)args;
+    char buffer[255];
+    int client_sock = targs -> client_sock;
+    free(args);
+    pthread_t tid = pthread_self();
+
+    // Communication Loop
+    while(1){
+        memset(buffer, 0, 255);
+        
+        int n = recv(client_sock, buffer, 255, 0);
+        if(n == SOCKET_ERROR){
+            printf("Error on reading! %d\n", WSAGetLastError());
+            break;
+        }
+        printf("Client %lu: %s\n", (unsigned long)tid, buffer);
+        if (strncmp(buffer, "Bye", 3) == 0) {
+            printf("Client requested to end the chat.\n"); 
+            break;            
+        }
+
+        memset(buffer, 0, 255);
+        fgets(buffer, 255, stdin);
+
+        n = send(client_sock, buffer, strlen(buffer), 0);
+        if(n == SOCKET_ERROR){
+            printf("Error on writing! %d\n", WSAGetLastError());
+            break;
+        }
+        if(strncmp("Bye", buffer, 3) == 0){
+            printf("Server requested to end the chat.\n");
+            break;
+        }
+    }
+    closesocket(client_sock);
+    return NULL;
 }
 
 int main(int argc, char *argv[]){
@@ -30,9 +73,8 @@ int main(int argc, char *argv[]){
     WSADATA wsa;
     SOCKET sockfd, newsockfd;
     struct sockaddr_in serv_addr, cli_addr;
-    int portno, n;
+    int portno;
     int clilen;
-    char buffer[255];
 
     // Initialize Winsock
     if(WSAStartup(MAKEWORD(2, 2), &wsa) != 0){
@@ -78,50 +120,28 @@ int main(int argc, char *argv[]){
     printf("Server listening on port %d...\n", portno);
     clilen = sizeof(cli_addr);
 
-    // Accept client connection
-    newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-    if(newsockfd == INVALID_SOCKET){
-        printf("Accept failed! Error code: %d\n", WSAGetLastError());
-        closesocket(sockfd);
-        WSACleanup();
-        exit(1);
-    }
-    printf("Accepted connection from %s:%d\n",
-           inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
-
-    // Communication Loop
     while(1){
-        memset(buffer, 0, 255);
-        
-        n = recv(newsockfd, buffer, 255, 0);
-        if(n == SOCKET_ERROR){
-            printf("Error on reading! %d\n", WSAGetLastError());
-            break;
+        // Accept client connection
+        newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
+        if(newsockfd == INVALID_SOCKET){
+            printf("Accept failed! Error code: %d\n", WSAGetLastError());
+            closesocket(sockfd);
+            WSACleanup();
+            exit(1);
         }
-        printf("Client: %s\n", buffer);
-        if (strncmp(buffer, "Bye", 3) == 0) {
-            printf("Client requested to end the chat.\n"); 
-            break;            
-        }
-
-        memset(buffer, 0, 255);
-        fgets(buffer, 255, stdin);
-
-        n = send(newsockfd, buffer, strlen(buffer), 0);
-        if(n == SOCKET_ERROR){
-            printf("Error on writing! %d\n", WSAGetLastError());
-            break;
-        }
-        if(strncmp("Bye", buffer, 3) == 0){
-            printf("Server requested to end the chat.\n");
-            break;
-        }
+        printf("Accepted connection from %s:%d\n",
+            inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
+        // int *client_sock = (int*)malloc(sizeof(int));
+        // *client_sock = newsockfd;
+        struct thread_args *targs = (struct thread_args *)malloc(sizeof(struct thread_args));
+        targs -> client_sock = newsockfd;
+        pthread_t tid;
+        pthread_create(&tid, NULL, handle_client, (void *)targs);
+        pthread_detach(tid);
     }
 
     // Close Sockets
-    closesocket(newsockfd);
     closesocket(sockfd);
     WSACleanup();
-
     return 0;
 }

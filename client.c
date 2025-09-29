@@ -11,7 +11,8 @@ close()
 #include<string.h>
 #include<winsock2.h>
 #include<ws2tcpip.h>
-
+#include<pthread.h>
+#include<unistd.h>
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library
 
 void error(const char *msg) {
