@@ -14,23 +14,38 @@ close()
 #include<winsock2.h>
 #include<ws2tcpip.h>
 #include<pthread.h>
-#include<unistd.h>
+#include<map>
 
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library
+
+#define MAX_CLIENTS 10
+
+SOCKET clients[MAX_CLIENTS];
+int client_count = 0;
+pthread_mutex_t clients_lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct thread_args{
     int client_sock;
 };
+
 void error(const char* msg){
     perror("Error occured: \n");
     exit(1);
 }
+
+// Thread to handle each client (receive-only)
 void *handle_client(void *args){
     struct thread_args *targs = (struct thread_args *)args;
     char buffer[255];
     int client_sock = targs -> client_sock;
     free(args);
-    pthread_t tid = pthread_self();
+    int tid;
+    for(int i=0; i< client_count; i++){
+        if(clients[i] == client_sock){
+            tid = i;
+            break;
+        }
+    }
 
     // Communication Loop
     while(1){
@@ -41,26 +56,51 @@ void *handle_client(void *args){
             printf("Error on reading! %d\n", WSAGetLastError());
             break;
         }
-        printf("Client %lu: %s\n", (unsigned long)tid, buffer);
+        printf("Client %d: %s\n", tid, buffer);
         if (strncmp(buffer, "Bye", 3) == 0) {
             printf("Client requested to end the chat.\n"); 
             break;            
         }
-
-        memset(buffer, 0, 255);
-        fgets(buffer, 255, stdin);
-
-        n = send(client_sock, buffer, strlen(buffer), 0);
-        if(n == SOCKET_ERROR){
-            printf("Error on writing! %d\n", WSAGetLastError());
-            break;
-        }
-        if(strncmp("Bye", buffer, 3) == 0){
-            printf("Server requested to end the chat.\n");
+    }
+    closesocket(client_sock);
+    pthread_mutex_lock(&clients_lock);
+    for(int i=0; i<client_count;i++){
+        if(clients[i] == client_sock){
+            for(int j=i; j<client_count-1; j++){
+                clients[j] = clients[j+1];
+            }
+            client_count--;
             break;
         }
     }
-    closesocket(client_sock);
+    pthread_mutex_unlock(&clients_lock);
+    return NULL;
+}
+
+// Thread to handle server input and choose client to send message
+void* server_input(void* arg){
+    char buffer[255];
+    while(1){
+        int target;
+        //printf("Enter client index to send message (0-%d): ", client_count-1);
+        scanf("%d", &target);
+        getchar(); // consume newline
+        
+        pthread_mutex_lock(&clients_lock);
+        if(target < 0 || target >= client_count){
+            printf("Invalid client index\n");
+            continue;
+        }
+        SOCKET client_sock = clients[target];
+        pthread_mutex_unlock(&clients_lock);
+
+        printf("Message: ");
+        fgets(buffer, 255, stdin);
+        int n = send(clients[target], buffer, strlen(buffer), 0);
+        if(n == SOCKET_ERROR){
+            printf("Error sending message: %d\n", WSAGetLastError());
+        }
+    }
     return NULL;
 }
 
@@ -120,6 +160,11 @@ int main(int argc, char *argv[]){
     printf("Server listening on port %d...\n", portno);
     clilen = sizeof(cli_addr);
 
+    // Launch server input thread
+    pthread_t input_tid;
+    pthread_create(&input_tid, NULL, server_input, NULL);
+    pthread_detach(input_tid);
+
     while(1){
         // Accept client connection
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
@@ -131,8 +176,20 @@ int main(int argc, char *argv[]){
         }
         printf("Accepted connection from %s:%d\n",
             inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
-        // int *client_sock = (int*)malloc(sizeof(int));
-        // *client_sock = newsockfd;
+
+        // Add to client list
+        pthread_mutex_lock(&clients_lock);
+        if(client_count < MAX_CLIENTS){
+            clients[client_count++] = newsockfd;
+        } else{
+            printf("Max clients reached. Connection rejected.\n");
+            closesocket(newsockfd);
+            pthread_mutex_unlock(&clients_lock);
+            continue;
+        }
+        pthread_mutex_unlock(&clients_lock);
+
+        // Create client thread
         struct thread_args *targs = (struct thread_args *)malloc(sizeof(struct thread_args));
         targs -> client_sock = newsockfd;
         pthread_t tid;
