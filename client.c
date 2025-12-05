@@ -1,42 +1,87 @@
 /*
-Client Side
-socket()
-connect()
-read()
-write()
-close()
+    Client side
+    socket()
+    connect()
+    read()
+    write()
+    close()
 */
+
 #include<stdio.h>
 #include<stdlib.h>
+#include<pthread.h>
 #include<string.h>
 #include<winsock2.h>
 #include<ws2tcpip.h>
-#include<pthread.h>
 #include<unistd.h>
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library
 
+SOCKET sockfd;
+
 void error(const char *msg) {
     fprintf(stderr, "%s. Error code: %d\n", msg, WSAGetLastError());
-    WSACleanup();
     exit(1);
+}
+
+// Send Messages
+void *sendMessages(void* args){
+    char buffer[1024];
+
+    while(1) {
+        printf("You: ");
+        fflush(stdout);
+
+        memset(buffer, 0, sizeof(buffer));
+        fgets(buffer, sizeof(buffer), stdin);
+        buffer[strcspn(buffer, "\n")] = 0;
+
+        send(sockfd, buffer, strlen(buffer), 0);
+
+        if(strcmp(buffer, "Bye") == 0) {
+            printf("Exiting chat...\n");
+            closesocket(sockfd);
+            WSACleanup();
+            exit(0);
+        }
+    }
+    return NULL;
+}
+
+// Receive Messages
+void *receiveMessages(void *args){
+    char buffer[1024];
+
+    while(1) {
+        memset(buffer, 0, sizeof(buffer));
+        int n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+
+        if(n <= 0){
+            printf("\nServer disconnected.\n");
+            exit(0);
+        }
+
+        buffer[n] = '\0';
+        printf("\nServer :%s\nYou: ", buffer);
+        fflush(stdout);
+    }
+    return NULL;
 }
 
 int main(int argc, char *argv[]){
     if(argc < 3){
-        fprintf(stderr, "Port No. not provide. Program terminated\n");
+        fprintf(stderr, "All arguments not provided. Program terminated!");
         exit(1);
     }
 
     WSADATA wsa;
-    SOCKET sockfd, newsockfd;
     struct sockaddr_in serv_addr;
     int portno, n;
-    char buffer[256];
+    char buffer[1024];
 
     portno = atoi(argv[2]);
 
     // Initialize Winsock
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    if(WSAStartup(MAKEWORD(2,2), &wsa) != 0){
         printf("WSAStartup failed. Error Code: %d\n", WSAGetLastError());
         exit(1);
     }
@@ -47,7 +92,7 @@ int main(int argc, char *argv[]){
         error("ERROR opening socket");
     }
 
-    // Setup  server address
+    // Setup server address
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(portno);
@@ -70,29 +115,16 @@ int main(int argc, char *argv[]){
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
         error("Connection Failed");
     }
+    printf("Connected to server!\n");
 
-    // Communication loop
-    while (1) {
-        memset(buffer, 0, 255);
-        fgets(buffer, 255, stdin);
-        n = send(sockfd, buffer, strlen(buffer), 0);
-        if (n == SOCKET_ERROR) {
-            error("Error on writing");
-        }
-        if(strncmp("Bye", buffer, 3) == 0){
-            break;
-        }
+    // Create two threads
+    pthread_t sendThread, recvThread;
 
-        memset(buffer, 0, 255);
-        n = recv(sockfd, buffer, 255, 0);
-        if (n == SOCKET_ERROR) {
-            error("Error on reading");
-        }
-        printf("Server: %s", buffer);
-        if (strncmp("Bye", buffer, 3) == 0) {
-            break;
-        }
-    }
+    pthread_create(&sendThread, NULL, sendMessages, NULL);
+    pthread_create(&recvThread, NULL, receiveMessages, NULL);
+    
+    pthread_join(sendThread, NULL);
+    pthread_join(recvThread, NULL);
 
     closesocket(sockfd);
     WSACleanup();
