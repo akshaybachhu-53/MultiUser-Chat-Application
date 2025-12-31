@@ -14,9 +14,12 @@
 #include<winsock2.h>
 #include<ws2tcpip.h>
 #include<unistd.h>
-#pragma comment(lib, "ws2_32.lib") // Link with winsock library
+#include<time.h>
+
+#pragma comment(lib, "ws2_32.lib") // Link with winsock library tells the linker to link the winsock library.
 
 SOCKET sockfd;
+pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void error(const char *msg) {
     fprintf(stderr, "%s. Error code: %d\n", msg, WSAGetLastError());
@@ -28,8 +31,10 @@ void *sendMessages(void* args){
     char buffer[1024];
 
     while(1) {
-        printf("You: ");
+        pthread_mutex_lock(&print_lock);
+        // printf("You: ");
         fflush(stdout);
+        pthread_mutex_unlock(&print_lock);
 
         memset(buffer, 0, sizeof(buffer));
         fgets(buffer, sizeof(buffer), stdin);
@@ -56,13 +61,17 @@ void *receiveMessages(void *args){
         int n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
 
         if(n <= 0){
+            pthread_mutex_lock(&print_lock);
             printf("\nServer disconnected.\n");
+            pthread_mutex_unlock(&print_lock);
             exit(0);
         }
 
         buffer[n] = '\0';
-        printf("\nServer :%s\nYou: ", buffer);
+        pthread_mutex_lock(&print_lock);
+        printf("\n                                             Server :%s\n", buffer);
         fflush(stdout);
+        pthread_mutex_unlock(&print_lock);
     }
     return NULL;
 }
