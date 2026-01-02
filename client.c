@@ -18,41 +18,66 @@
 
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library tells the linker to link the winsock library.
 
+#define RESET   "\x1b[0m"
+#define BLUE    "\x1b[34m"
+#define WIDTH 60
+
 SOCKET sockfd;
 pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    char mode;
+    char target[32];
+} ChatInfo;
+
 
 void error(const char *msg) {
     fprintf(stderr, "%s. Error code: %d\n", msg, WSAGetLastError());
     exit(1);
 }
 
-// Send Messages
+/* --------------- Send Messages --------------- */
 void *sendMessages(void* args){
-    char buffer[1024];
+    ChatInfo *info = (ChatInfo *)args;
+    char chat_mode = info->mode;
+    char target[32];
+    strcpy(target, info->target);
 
-    while(1) {
-        pthread_mutex_lock(&print_lock);
-        // printf("You: ");
-        fflush(stdout);
-        pthread_mutex_unlock(&print_lock);
+    char buffer[1024];
+    char message[1100];
+
+    while (1) {
 
         memset(buffer, 0, sizeof(buffer));
         fgets(buffer, sizeof(buffer), stdin);
         buffer[strcspn(buffer, "\n")] = 0;
 
-        send(sockfd, buffer, strlen(buffer), 0);
+        // Prepare message based on mode
+        if (chat_mode == 'p' || chat_mode == 'P') {
+            snprintf(message, sizeof(message), "@p %s %s", target, buffer);
+        } else if (chat_mode == 'b' || chat_mode == 'B') {
+            snprintf(message, sizeof(message), "@b %s", buffer);
+        } else {
+            continue;
+        }
 
-        if(strcmp(buffer, "Bye") == 0) {
+        send(sockfd, message, strlen(message), 0);
+
+        if (strcmp(buffer, "Bye") == 0) {
+            pthread_mutex_lock(&print_lock);
             printf("Exiting chat...\n");
+            pthread_mutex_unlock(&print_lock);
+
             closesocket(sockfd);
             WSACleanup();
             exit(0);
         }
     }
+    free(info);
     return NULL;
 }
 
-// Receive Messages
+/* --------------- Receive Messages ---------------- */
 void *receiveMessages(void *args){
     char buffer[1024];
 
@@ -69,7 +94,7 @@ void *receiveMessages(void *args){
 
         buffer[n] = '\0';
         pthread_mutex_lock(&print_lock);
-        printf("\n                                             Server :%s\n", buffer);
+        printf("\n%*s" BLUE "%s" RESET "\n", 50, "", buffer);
         fflush(stdout);
         pthread_mutex_unlock(&print_lock);
     }
@@ -126,10 +151,41 @@ int main(int argc, char *argv[]){
     }
     printf("Connected to server!\n");
 
+    char username[32];
+
+    printf("Enter Username: ");
+    fgets(username, sizeof(username), stdin);
+    username[strcspn(username, "\n")] = 0;
+
+    // Send username to server
+    char intro[64];
+    snprintf(intro, sizeof(intro), "@u %s", username);
+    send(sockfd, intro, strlen(intro), 0);
+
+    char chat_mode;
+    printf("Choose mode:\n");
+    printf("p - Private Chat\n");
+    printf("b - Broadcast to all\n");
+    printf("Choice: ");
+    scanf(" %c", &chat_mode);
+    getchar();
+
+    char target_user[32] = {0};
+
+    if (chat_mode == 'p' || chat_mode == 'P') {
+        printf("Enter username to chat with: ");
+        fgets(target_user, sizeof(target_user), stdin);
+        target_user[strcspn(target_user, "\n")] = 0;
+    }
+
     // Create two threads
     pthread_t sendThread, recvThread;
 
-    pthread_create(&sendThread, NULL, sendMessages, NULL);
+    ChatInfo *info = malloc(sizeof(ChatInfo));
+    info->mode = chat_mode;
+    strcpy(info->target, target_user);
+
+    pthread_create(&sendThread, NULL, sendMessages, info);
     pthread_create(&recvThread, NULL, receiveMessages, NULL);
     
     pthread_join(sendThread, NULL);
