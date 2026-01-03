@@ -17,11 +17,6 @@ Clients communicate through a central server using **private** or **broadcast** 
 
 ---
 
-## 🧠 Architecture
-Client A ─┐
-Client B ─┼──► TCP Server ───► Client C
-Client D ─┘
-
 ### Server
 - Accepts clients using `accept()`
 - Spawns a thread per client
@@ -70,10 +65,9 @@ e - Exit client
 ## ▶️ Build & Run
 
 ### Compile Server
-```bash
 gcc server.c -o server.exe -lws2_32 -lpthread
 
-### Compile Server
+### Compile Client
 gcc client.c -o client.exe -lws2_32 -lpthread
 
 
