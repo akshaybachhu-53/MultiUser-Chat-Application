@@ -16,11 +16,17 @@ close()
 #include<ws2tcpip.h>
 #include<pthread.h>
 #include<string.h>
-#include<time.h>
+#include<time.h>     
 
 #pragma comment(lib, "ws2_32.lib") // Link with winsock library
 
 typedef SOCKET sock_t;
+
+// Function prototypes
+void broadcast(SOCKET sender, char *msg);
+void send_private(const char *target_user, const char *msg, sock_t sender);
+void server_loop(SOCKET sockfd);
+
 
 typedef struct ClientNode {
     sock_t sock;
@@ -31,7 +37,18 @@ typedef struct ClientNode {
 ClientNode *clients_head = NULL;
 pthread_mutex_t clients_lock = PTHREAD_MUTEX_INITIALIZER;
 
- /* ---------------- Add client ------------- */
+const char* get_username_by_socket(sock_t s) {
+    ClientNode *c = clients_head;
+    while (c) {
+        if (c->sock == s) {
+            return c->username;
+        }
+        c = c->next;
+    }
+    return "Unknown";
+}
+
+/* ---------------- Add client ------------- */
 void add_client(sock_t s) {
     ClientNode *node = (ClientNode*)malloc(sizeof(ClientNode));
     node->sock = s;
@@ -65,9 +82,6 @@ void remove_client(sock_t s) {
 void *client_handler(void* args) {
     sock_t client_sock = *((sock_t*)args);
     free(args);
-
-    // char welcome[] = "Server: Welcome! You are connected.\n";
-    // send(client_sock, welcome, strlen(welcome), 0);
 
     char buffer1[1024];
 
@@ -112,7 +126,6 @@ void *client_handler(void* args) {
         }
 
         buffer[n] = '\0';
-        // printf("Client(%d): %s\n", (int)client_sock, buffer);
 
         // If client wants to end conversation
         if (strncmp(buffer, "Bye", 3) == 0) {
@@ -142,13 +155,19 @@ void *client_handler(void* args) {
 void broadcast(SOCKET sender, char *msg) {
     pthread_mutex_lock(&clients_lock);
 
+    const char *sender_name = get_username_by_socket(sender);
+    char out[1100];
+
+    snprintf(out, sizeof(out), "%s: %s", sender_name, msg);
+
     ClientNode *c = clients_head;
-    while(c){
-        if(c->sock != sender) {
-            send(c->sock, msg, strlen(msg), 0);
+    while (c) {
+        if (c->sock != sender) {
+            send(c->sock, out, strlen(out), 0);
         }
         c = c->next;
     }
+
     pthread_mutex_unlock(&clients_lock);
 }
 
@@ -156,14 +175,20 @@ void broadcast(SOCKET sender, char *msg) {
 void send_private(const char *target_user, const char *msg, sock_t sender) {
     pthread_mutex_lock(&clients_lock);
 
+    const char *sender_name = get_username_by_socket(sender);
+    char out[1100];
+
+    snprintf(out, sizeof(out), "%s: %s", sender_name, msg);
+
     ClientNode* c = clients_head;
-    while(c) {
-        if(strcmp(c->username, target_user) == 0){
-            send(c->sock, msg, strlen(msg), 0);
+    while (c) {
+        if (strcmp(c->username, target_user) == 0) {
+            send(c->sock, out, strlen(out), 0);
             break;
         }
         c = c->next;
     }
+
     pthread_mutex_unlock(&clients_lock);
 }
 
@@ -187,6 +212,34 @@ void *server_input_thread(void *arg) {
         pthread_mutex_unlock(&clients_lock);
     }
     return NULL;
+}
+
+void server_loop(SOCKET sockfd) {
+    struct sockaddr_in cli_addr;
+    int clilen;
+
+    while (1) {
+        clilen = sizeof(cli_addr);
+        SOCKET client = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
+
+        if (client == INVALID_SOCKET) {
+            printf("Accept failed: %d\n", WSAGetLastError());
+            continue;
+        }
+
+        printf("Client connected: %s:%d\n",
+               inet_ntoa(cli_addr.sin_addr),
+               ntohs(cli_addr.sin_port));
+
+        add_client(client);
+
+        pthread_t tid;
+        SOCKET *p = malloc(sizeof(SOCKET));
+        *p = client;
+
+        pthread_create(&tid, NULL, client_handler, p);
+        pthread_detach(tid);
+    }
 }
 
 
@@ -248,30 +301,8 @@ int main(int argc, char *argv[]){
     pthread_create(&admin_thread, NULL, server_input_thread, NULL);
     pthread_detach(admin_thread);
 
-    // Communication loop
-    while(1) {
-        // 6. Accept
-        clilen = sizeof(cli_addr);
-        SOCKET client = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-        if (client == INVALID_SOCKET) {
-            printf("Accept failed: %d\n", WSAGetLastError());
-            continue;
-        }
-
-        printf("Client connected: %s:%d\n",
-        inet_ntoa(cli_addr.sin_addr),
-        ntohs(cli_addr.sin_port));
-
-        // Add Client to the list
-        add_client(client);
-
-        pthread_t tid;
-        SOCKET *p = malloc(sizeof(SOCKET));
-        *p = client;
-
-        pthread_create(&tid, NULL, client_handler, p);
-        pthread_detach(tid);
-    }
+    // Communication
+    server_loop(sockfd);
 
     // Close Sockets CleanUp
     closesocket(sockfd);
